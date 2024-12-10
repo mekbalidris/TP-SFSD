@@ -43,9 +43,10 @@ char fileName[] = "Ms.dat";
 
 // ***********************************************************************
 // ***********************************************************************
-
+// ****************initialization ********************
 void initialisationDisque(char fileName[]) {
     BlockState Ms[MaxBlocks];
+    buffer buf;
     FILE *ms = fopen(fileName, "wb");
 
     if (ms == NULL) {
@@ -60,13 +61,35 @@ void initialisationDisque(char fileName[]) {
 
     size_t elements = fwrite(Ms, sizeof(BlockState), MaxBlocks, ms);
     if (elements != MaxBlocks) {
-        perror("Error writing to file");
-    } else {
-        printf("Blocks State Table written successfully\n");
+        perror("Error writing block state table to file");
+        fclose(ms);
+        return;
+    }
+
+    printf("Blocks State Table written successfully\n");
+
+    for (int i = 0; i < MaxBlocks; i++) {
+        memset(&buf, 0, sizeof(buf));
+        buf.address = i;
+        buf.nbEnregistrement = 0;
+        buf.isFree = true;
+
+        size_t contentWritten = fwrite(&buf, sizeof(buffer), 1, ms);
+        if (contentWritten != 1) {
+            perror("Error writing disk block content to file");
+            fclose(ms);
+            return;
+        }
     }
 
     fclose(ms);
 }
+
+
+// ***************************************************************
+// ***************************************************************
+// *****************tableDallocation *****************************
+
 
 void tableDallocation(char operation, int add) {
     BlockState Ms[MaxBlocks];
@@ -85,7 +108,7 @@ void tableDallocation(char operation, int add) {
         case 'f': 
             state.free = true;
         break;
-        
+
         case 'a': 
             state.free = false;
         break;
@@ -97,6 +120,43 @@ void tableDallocation(char operation, int add) {
     }
 
     fwrite(&state, sizeof(BlockState), 1, ms);
+    fclose(ms);
+}
+// ************************************************************
+// ************************************************************
+// ************* compactage:
+// ************************************************************
+// ************************************************************
+// *************vidange de la memoire centrale ***************
+
+void vider(char fileName[]) {
+    BlockState tableDallocation[MaxBlocks];
+    buffer buf;
+    FILE *ms = fopen(fileName, "r+b");
+
+    if (ms == NULL) {
+        perror("Error opening file ");
+        return;
+    }
+
+    for (int i = 0; i < MaxBlocks; i++) {
+        tableDallocation[i].address = i;
+        tableDallocation[i].free = true;
+    }
+
+    fseek(ms, 0, SEEK_SET);
+    fwrite(tableDallocation, sizeof(BlockState), MaxBlocks, ms);
+
+    for (int i = 0; i < MaxBlocks; i++) {
+        memset(&buf, 0, sizeof(buffer));
+        buf.address = i;
+        buf.nbEnregistrement = 0;
+        buf.isFree = true;
+
+        fseek(ms, sizeof(BlockState) + sizeof(buffer) * i, SEEK_SET);
+        fwrite(&buf, sizeof(buffer), 1, ms);
+    }
+
     fclose(ms);
 }
 
