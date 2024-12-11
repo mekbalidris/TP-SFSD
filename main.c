@@ -121,18 +121,18 @@ void tableDallocation(char fileName[], char operation, int add) {
     fclose(ms);
 }
 
-void compactage(char fileName[]) {
-    block msBlocks[MaxBlocks];
-    FILE* ms = fopen(fileName, "r+b");
-    block msBlocks[MaxBlocks];
+// void compactage(char fileName[]) {
+//     block msBlocks[MaxBlocks];
+//     FILE* ms = fopen(fileName, "r+b");
+//     block msBlocks[MaxBlocks];
 
-    fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta), SEEK_SET);
+//     fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta), SEEK_SET);
 
-    fread(msBlocks, sizeof(block), MaxBlocks, ms);
+//     fread(msBlocks, sizeof(block), MaxBlocks, ms);
 
 
-    fclose(ms);
-}
+//     fclose(ms);
+// }
 
 void vider(char fileName[]) {
     BlockState tableDallocation[MaxBlocks];
@@ -168,6 +168,10 @@ void vider(char fileName[]) {
     }
 
     fclose(ms);
+}
+
+void gestionDeStockage() {
+
 }
 
 //***************************FILE MANAGMENT************************************
