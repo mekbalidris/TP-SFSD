@@ -170,8 +170,51 @@ void vider(char fileName[]) {
     fclose(ms);
 }
 
-void gestionDeStockage() {
+void gestionDeStockage(char fileName[], int requiredBlocks) {
+    BlockState blockStates[MaxBlocks];
+    int freeBlocks = 0;
 
+    FILE *ms = fopen(fileName, "rb");
+    if (ms == NULL) {
+        perror("Error opening file for stockage management");
+        return;
+    }
+
+
+    fread(blockStates, sizeof(BlockState), MaxBlocks, ms);
+    fclose(ms);
+
+
+    for (int i = 0; i < MaxBlocks; i++) {
+        if (blockStates[i].free) {
+            freeBlocks++;
+        }
+    }
+
+    if (freeBlocks >= requiredBlocks) {
+        printf("Sufficient storage available: %d free blocks.\n", freeBlocks);
+    } else {
+        printf("Insufficient storage. Performing compactage...\n");
+        compactage(fileName);
+
+
+        freeBlocks = 0;
+        ms = fopen(fileName, "rb");
+        fread(blockStates, sizeof(BlockState), MaxBlocks, ms);
+        fclose(ms);
+
+        for (int i = 0; i < MaxBlocks; i++) {
+            if (blockStates[i].free) {
+                freeBlocks++;
+            }
+        }
+
+        if (freeBlocks >= requiredBlocks) {
+            printf("Storage available after compactage: %d free blocks.\n", freeBlocks);
+        } else {
+            printf("Storage full! Unable to allocate required space.\n");
+        }
+    }
 }
 
 //***************************FILE MANAGMENT************************************
