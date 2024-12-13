@@ -135,10 +135,11 @@ void compactage(char fileName[]) {
 
     int destIndex = 0;
     for (int i = 0; i < MaxBlocks; i++) {
-        if (!msBlocks[i].isFree) {
+        if (msBlocks[i].nbEnregistrement != 0) {
             if (i != destIndex) {
                 msBlocks[destIndex] = msBlocks[i];
                 msBlocks[i].isFree = true;
+                msBlocks[i].nbEnregistrement = 0;
             }
             destIndex++;
         }
