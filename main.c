@@ -121,18 +121,34 @@ void tableDallocation(char fileName[], char operation, int add) {
     fclose(ms);
 }
 
-// void compactage(char fileName[]) {
-//     block msBlocks[MaxBlocks];
-//     FILE* ms = fopen(fileName, "r+b");
-//     block msBlocks[MaxBlocks];
+void compactage(char fileName[]) {
+    FILE *ms = fopen(fileName, "rb+");
+    if (ms == NULL) {
+        perror("Error opening file");
+        return;
+    }
 
-//     fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta), SEEK_SET);
+    fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta), SEEK_SET);
 
-//     fread(msBlocks, sizeof(block), MaxBlocks, ms);
+    block msBlocks[MaxBlocks];
+    fread(msBlocks, sizeof(block), MaxBlocks, ms);
 
+    int destIndex = 0;
+    for (int i = 0; i < MaxBlocks; i++) {
+        if (!msBlocks[i].isFree) {
+            if (i != destIndex) {
+                msBlocks[destIndex] = msBlocks[i];
+                msBlocks[i].isFree = true;
+            }
+            destIndex++;
+        }
+    }
 
-//     fclose(ms);
-// }
+    fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta), SEEK_SET);
+    fwrite(msBlocks, sizeof(block), MaxBlocks, ms);
+
+    fclose(ms);
+}
 
 void vider(char fileName[]) {
     BlockState tableDallocation[MaxBlocks];
