@@ -18,6 +18,7 @@ typedef struct {
     enregistrement tab[3];
     int address;
     int nbEnregistrement;
+    int next;
     bool isFree;
 } block, buffer;
 
