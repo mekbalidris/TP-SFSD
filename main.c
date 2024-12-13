@@ -17,6 +17,7 @@ typedef struct {
     enregistrement tab[3];
     int address;
     int nbEnregistrement;
+    int next;
     bool isFree;
 } block, buffer;
 
@@ -128,9 +129,14 @@ void compactage(char fileName[]) {
         return;
     }
 
-    fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta), SEEK_SET);
+    BlockState blockStates[MaxBlocks];
+    FilesMeta filesMeta;
+    fseek(ms, 0, SEEK_SET);
+    fread(blockStates, sizeof(BlockState), MaxBlocks, ms);
+    fread(&filesMeta, sizeof(FilesMeta), 1, ms);
 
     block msBlocks[MaxBlocks];
+    fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta), SEEK_SET);
     fread(msBlocks, sizeof(block), MaxBlocks, ms);
 
     int destIndex = 0;
@@ -138,15 +144,59 @@ void compactage(char fileName[]) {
         if (msBlocks[i].nbEnregistrement != 0) {
             if (i != destIndex) {
                 msBlocks[destIndex] = msBlocks[i];
+                blockStates[destIndex] = blockStates[i];
                 msBlocks[i].isFree = true;
                 msBlocks[i].nbEnregistrement = 0;
+                blockStates[i].free = true;
+            }
+            if (destIndex > 0) {
+                msBlocks[destIndex - 1].address = destIndex;
             }
             destIndex++;
         }
     }
 
+    for (int i = destIndex; i < MaxBlocks; i++) {
+        memset(&msBlocks[i], 0, sizeof(block));
+        blockStates[i].free = true;
+    }
+
+    fseek(ms, 0, SEEK_SET);
+    fwrite(blockStates, sizeof(BlockState), MaxBlocks, ms);
+    fwrite(&filesMeta, sizeof(FilesMeta), 1, ms);
+
     fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta), SEEK_SET);
     fwrite(msBlocks, sizeof(block), MaxBlocks, ms);
+
+    fclose(ms);
+
+    updateFileMetadataAfterCompaction(fileName);
+}
+
+void updateFileMetadataAfterCompaction(char fileName[]) {
+    FILE *ms = fopen(fileName, "rb+");
+    if (ms == NULL) {
+        perror("Error opening file");
+        return;
+    }
+
+    FilesMeta filesMeta;
+    fseek(ms, sizeof(BlockState) * MaxBlocks, SEEK_SET);
+    fread(&filesMeta, sizeof(FilesMeta), 1, ms);
+
+    for (int i = 0; i < filesMeta.numberOf_files; i++) {
+        int firstBlockAddress = filesMeta.filesArray[i].addressFirst;
+        
+        for (int j = 0; j < MaxBlocks; j++) {
+            if (firstBlockAddress == j) {
+                filesMeta.filesArray[i].addressFirst = j;
+                break;
+            }
+        }
+    }
+
+    fseek(ms, sizeof(BlockState) * MaxBlocks, SEEK_SET);
+    fwrite(&filesMeta, sizeof(FilesMeta), 1, ms);
 
     fclose(ms);
 }
@@ -189,7 +239,6 @@ void vider(char fileName[]) {
 
 void gestionDeStockage(char fileName[], int requiredBlocks) {
     BlockState blockStates[MaxBlocks];
-    int freeBlocks = 0;
 
     FILE *ms = fopen(fileName, "rb");
     if (ms == NULL) {
@@ -197,29 +246,35 @@ void gestionDeStockage(char fileName[], int requiredBlocks) {
         return;
     }
 
-
     fread(blockStates, sizeof(BlockState), MaxBlocks, ms);
     fclose(ms);
 
-
+    int maxfree = 0;
+    int freeBlocks;
     for (int i = 0; i < MaxBlocks; i++) {
         if (blockStates[i].free) {
             freeBlocks++;
+            if(maxfree < freeBlocks){
+                maxfree = freeBlocks;
+            }
+        }else{
+            freeBlocks = 0;
         }
     }
 
-    if (freeBlocks >= requiredBlocks) {
-        printf("Sufficient storage available: %d free blocks.\n", freeBlocks);
+    if (maxfree >= requiredBlocks) {
+        printf("Sufficient storage available: %d free blocks.\n", maxfree);
     } else {
         printf("Insufficient storage. Performing compactage...\n");
+
         compactage(fileName);
 
 
+        //this step only to check if the comptage really did the necessary job -It can be removed-
         freeBlocks = 0;
         ms = fopen(fileName, "rb");
         fread(blockStates, sizeof(BlockState), MaxBlocks, ms);
         fclose(ms);
-
         for (int i = 0; i < MaxBlocks; i++) {
             if (blockStates[i].free) {
                 freeBlocks++;
