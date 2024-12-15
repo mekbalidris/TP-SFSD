@@ -122,6 +122,7 @@ void tableDallocation(char fileName[], char operation, int add) {
     fclose(ms);
 }
 
+//function to perform compaction on the disk
 void compactage(char fileName[]) {
     FILE *ms = fopen(fileName, "rb+");
     if (ms == NULL) {
@@ -131,36 +132,59 @@ void compactage(char fileName[]) {
 
     BlockState blockStates[MaxBlocks];
     FilesMeta filesMeta;
+
+    //read block states and file metadata
     fseek(ms, 0, SEEK_SET);
     fread(blockStates, sizeof(BlockState), MaxBlocks, ms);
     fread(&filesMeta, sizeof(FilesMeta), 1, ms);
 
     block msBlocks[MaxBlocks];
+
+    //read the blocks from the file
     fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta), SEEK_SET);
     fread(msBlocks, sizeof(block), MaxBlocks, ms);
 
-    int destIndex = 0;
+    int destIndex = 0;        //pointer to place the next valid block
+    int lastValidBlock = -1;  //tracks the last valid block
+    int currentFile = 0;      //tracks the current file being processed
+
+    //iterate over each block to compact and move non-empty blocks to the front
     for (int i = 0; i < MaxBlocks; i++) {
         if (msBlocks[i].nbEnregistrement != 0) {
-            if (i != destIndex) {
-                msBlocks[destIndex] = msBlocks[i];
-                blockStates[destIndex] = blockStates[i];
-                msBlocks[i].isFree = true;
-                msBlocks[i].nbEnregistrement = 0;
-                blockStates[i].free = true;
+            //check if the current block belongs to a new file and update the 'next' pointer
+            if (i != filesMeta.filesArray[currentFile].addressFirst &&
+                (currentFile + 1 < filesMeta.numberOf_files) && 
+                i == filesMeta.filesArray[currentFile + 1].addressFirst) {
+                //update 'next' pointer to link the last valid block to the current block
+                if (lastValidBlock != -1) {
+                    msBlocks[lastValidBlock].next = i;
+                }
+                currentFile++;  //move to the next file
             }
-            if (destIndex > 0) {
-                msBlocks[destIndex - 1].address = destIndex;
-            }
+
+            //move current block to the 'destIndex' position
+            msBlocks[destIndex] = msBlocks[i];
+            blockStates[destIndex] = blockStates[i];
+
+            //mark the current block as free
+            msBlocks[i].isFree = true;
+            msBlocks[i].nbEnregistrement = 0;
+            blockStates[i].free = true;
+
+            //update the last valid block and move the destination index
+            lastValidBlock = destIndex;
             destIndex++;
         }
     }
 
+    //make all remaining blocks available and reset them as free
     for (int i = destIndex; i < MaxBlocks; i++) {
-        memset(&msBlocks[i], 0, sizeof(block));
-        blockStates[i].free = true;
+        memset(&msBlocks[i], 0, sizeof(block));  //clear the block
+        blockStates[i].free = true;  //mark as free
+        msBlocks[i].next = -1;       //set 'next' to -1 for empty blocks
     }
 
+    //write the updated block states and blocks back to the file
     fseek(ms, 0, SEEK_SET);
     fwrite(blockStates, sizeof(BlockState), MaxBlocks, ms);
     fwrite(&filesMeta, sizeof(FilesMeta), 1, ms);
@@ -170,9 +194,11 @@ void compactage(char fileName[]) {
 
     fclose(ms);
 
+    //update the file metadata after compaction
     updateFileMetadataAfterCompaction(fileName);
 }
 
+//function to update file metadata after compaction
 void updateFileMetadataAfterCompaction(char fileName[]) {
     FILE *ms = fopen(fileName, "rb+");
     if (ms == NULL) {
@@ -180,23 +206,39 @@ void updateFileMetadataAfterCompaction(char fileName[]) {
         return;
     }
 
+    BlockState blockStates[MaxBlocks];
     FilesMeta filesMeta;
-    fseek(ms, sizeof(BlockState) * MaxBlocks, SEEK_SET);
-    fread(&filesMeta, sizeof(FilesMeta), 1, ms);
+    block msBlocks[MaxBlocks];
 
+    //read block states, file metadata, and blocks from the file
+    fseek(ms, 0, SEEK_SET);
+    fread(blockStates, sizeof(BlockState), MaxBlocks, ms);
+    fread(&filesMeta, sizeof(FilesMeta), 1, ms);
+    fread(msBlocks, sizeof(block), MaxBlocks, ms);
+
+    //update the 'addressFirst' field for each file after compaction
     for (int i = 0; i < filesMeta.numberOf_files; i++) {
-        int firstBlockAddress = filesMeta.filesArray[i].addressFirst;
-        
-        for (int j = 0; j < MaxBlocks; j++) {
-            if (firstBlockAddress == j) {
-                filesMeta.filesArray[i].addressFirst = j;
-                break;
-            }
+        int currentBlock = filesMeta.filesArray[i].addressFirst;
+        int previousBlock = -1;
+
+        //traverse the blocks to find the last valid block in the file
+        //curretBlock != -1 checks to see that the block isnt associated to any file
+        while (currentBlock != -1 && msBlocks[currentBlock].nbEnregistrement != 0) {
+            previousBlock = currentBlock;
+            currentBlock = msBlocks[currentBlock].next;  //move to the next block in the chain
+        }
+
+        //if a valid block was found, update the 'addressFirst' of the file
+        if (previousBlock != -1) {
+            filesMeta.filesArray[i].addressFirst = previousBlock;
         }
     }
 
-    fseek(ms, sizeof(BlockState) * MaxBlocks, SEEK_SET);
+    //write the updated metadata and blocks back to the file
+    fseek(ms, 0, SEEK_SET);
+    fwrite(blockStates, sizeof(BlockState), MaxBlocks, ms);
     fwrite(&filesMeta, sizeof(FilesMeta), 1, ms);
+    fwrite(msBlocks, sizeof(block), MaxBlocks, ms);
 
     fclose(ms);
 }
@@ -246,41 +288,49 @@ void gestionDeStockage(char fileName[], int requiredBlocks) {
         return;
     }
 
+    //read the block states into memory
     fread(blockStates, sizeof(BlockState), MaxBlocks, ms);
     fclose(ms);
 
     int maxfree = 0;
-    int freeBlocks;
+    int freeBlocks = 0; //initialize freeBlocks variable
     for (int i = 0; i < MaxBlocks; i++) {
         if (blockStates[i].free) {
             freeBlocks++;
-            if(maxfree < freeBlocks){
+            if (maxfree < freeBlocks) {
                 maxfree = freeBlocks;
             }
-        }else{
-            freeBlocks = 0;
+        } else {
+            freeBlocks = 0; //reset freeBlocks count when a non-free block is found
         }
     }
 
+    //check if there are enough free blocks
     if (maxfree >= requiredBlocks) {
         printf("Sufficient storage available: %d free blocks.\n", maxfree);
     } else {
         printf("Insufficient storage. Performing compactage...\n");
 
+        //call compactage to defragment the storage
         compactage(fileName);
 
-
-        //this step only to check if the comptage really did the necessary job -It can be removed-
+        //re-check the number of free blocks after compaction
         freeBlocks = 0;
         ms = fopen(fileName, "rb");
+        if (ms == NULL) {
+            perror("Error opening file after compaction");
+            return;
+        }
         fread(blockStates, sizeof(BlockState), MaxBlocks, ms);
         fclose(ms);
+
         for (int i = 0; i < MaxBlocks; i++) {
             if (blockStates[i].free) {
                 freeBlocks++;
             }
         }
 
+        //after compaction, check if there are enough free blocks
         if (freeBlocks >= requiredBlocks) {
             printf("Storage available after compactage: %d free blocks.\n", freeBlocks);
         } else {
@@ -288,6 +338,7 @@ void gestionDeStockage(char fileName[], int requiredBlocks) {
         }
     }
 }
+
 
 //***************************FILE MANAGMENT************************************
 
