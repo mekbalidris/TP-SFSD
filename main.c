@@ -344,6 +344,99 @@ void gestionDeStockage(char fileName[], int requiredBlocks) {
 
 // Function to create a new data file
 
+void insertRecordChained(char fileName[], int fileId, enregistrement record){
+    FILE *ms = fopen(fileName, "rb+");
+    if(ms==NULL){
+        printf("Error opening file\n");
+        return;
+    }
+
+    BlockState BlockState[MaxBlocks];
+    FilesMeta filesMeta; 
+    block currentBlock;
+
+    fread(BlockState,sizeof(BlockState),MaxBlocks,ms); // load block state 
+    fread(&filesMeta,sizeof(FilesMeta),1,ms); // load files metadata
+
+    metaData *fileMeta = NULL; // pointer to the file metadata
+    for (int i = 0; i < filesMeta.numberOf_files; i++) { 
+        if (filesMeta.filesArray[i].fileId == fileId) { 
+            fileMeta = &filesMeta.filesArray[i]; // assign pointer to file metadata (theres diffrence between fileMeta and file(s)Meta )
+            break; 
+        }
+    }
+
+     if (fileMeta == NULL) {
+        printf("File not found!\n");
+        fclose(ms);
+        return;
+    }
+
+    int currentBlockAddress = fileMeta->addressFirst;
+    int isSorted = fileMeta->modeOrganizationIntern;
+
+    while (currentBlockAddress != -1) {
+        fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta) + sizeof(block) * currentBlockAddress, SEEK_SET); // 
+        fread(&currentBlock, sizeof(block), 1, ms); // read current block data
+        if(currentBlock.nbEnregistrement<3){
+            if(!isSorted){
+                currentBlock.tab[currentBlock.nbEnregistrement]= record; // add new record to the block
+            }
+            else{
+                // block is sorted , find the correct position for the new record
+                int i = currentBlock.nbEnregistrement - 1;
+                while(i>=0 && currentBlock.tab[i].id > record.id){
+                    currentBlock.tab[i+1] = currentBlock.tab[i]; // shift elements to the right
+                    i--;
+                }
+                currentBlock.tab[i+1] = currentBlock.tab[i];
+            }
+        }
+        currentBlock.nbEnregistrement++;
+        fseek(ms, -sizeof(block), SEEK_CUR); // move back to the block data
+        fwrite(&currentBlock, sizeof(block), 1, ms); // write the block data back to the file
+        fileMeta->sizeEnrgs++; 
+        fclose(ms);
+        return;
+        
+        currentBlockAddress = currentBlock.next; // move to the next block
+    }
+
+    // if we reach this point, it means the file is full and we need to add a new block
+    for(int newBlockAdress = 0; newBlockAdress < MaxBlocks; newBlockAdress++){
+        if(BlockState[newBlockAdress].free){
+            BlockState[newBlockAdress].free = false;
+            tableDallocation(fileName,'a',newBlockAdress); // update the block allocation table
+
+            // initialize the new block
+            memset(&currentBlock,0,sizeof(block)); // reset the block data
+            currentBlock.address = newBlockAdress;
+            currentBlock.nbEnregistrement = 1;
+            currentBlock.tab[0] = record; // add new record as the first record in the new block
+            currentBlock.next = -1;
+
+            // update the last block next pointer
+            fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta) + sizeof(block) * fileMeta->sizeBlocks, SEEK_SET); // move to the end of the file
+            fread(&currentBlock, sizeof(block), 1, ms); // read the last block data
+            currentBlock.next = newBlockAdress; // link the new block to the last block
+            fseek(ms, -sizeof(block), SEEK_CUR); 
+            fwrite(&currentBlock, sizeof(block), 1, ms); // write the new block data back to the file
+
+            // write the new block data to the file
+            fseek(ms, sizeof(BlockState)*MaxBlocks + sizeof(FilesMeta) + sizeof(block)*newBlockAdress, SEEK_SET); // move to the new block data(soon to be the new end of the file)
+            fwrite(&currentBlock, sizeof(block), 1, ms); // write the new block data at the end of the file
+
+            // update metaData
+            fileMeta->sizeBlocks++;
+            fileMeta->sizeEnrgs++;
+            fclose(ms);
+            return;
+        }
+    }
+    printf("Error : no free block available\n");
+    fclose(ms);
+}
+
 int main() {
 
 }
