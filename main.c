@@ -437,6 +437,146 @@ void insertRecordChained(char fileName[], int fileId, enregistrement record){
     fclose(ms);
 }
 
+// physical delete function
+void physicalDelete(char fileName[], int fileId, int recordId){
+    FILE *ms = fopen(fileName, "rb+");
+    if(ms == NULL){
+        printf("Error opening file for reading/writing");
+        return;
+    }
+
+    BlockState blockState[MaxBlocks];
+    FilesMeta filesMeta; 
+    block currentBlock;
+
+    fread(blockState,sizeof(BlockState),MaxBlocks,ms); // load block state 
+    fread(&filesMeta,sizeof(FilesMeta),1,ms); // load files metadata
+
+    metaData *fileMeta = NULL; // pointer to the file metadata
+    for(int i = 0;i<filesMeta.numberOf_files;i++){
+        if(filesMeta.filesArray[i].fileId == fileId){
+            fileMeta = &filesMeta.filesArray[i];
+            break;
+        }
+    }
+    if(fileMeta == NULL){
+        printf("File not found\n");
+        return;
+    }
+
+    int currentBlockAdress;
+    int prevBlockAdress = -1; // assuming that we only have one block
+
+    if(fileMeta->modeOrganizationGlobal){ // assuming true means 'chained'
+        currentBlockAdress = fileMeta->addressFirst;  
+
+        while(currentBlockAdress != -1){ 
+    
+            fseek(ms, sizeof(BlockState)*MaxBlocks + sizeof(FilesMeta) + sizeof(block) * currentBlockAdress, SEEK_SET); 
+            fread(&currentBlock,sizeof(block),1,ms); // read current block data
+
+            // search for record in th current block
+            for(int i=0;i<currentBlock.nbEnregistrement;i++){
+                if(currentBlock.tab[i].id == recordId){
+                    for(int j=i;j<currentBlock.nbEnregistrement-1;j++){
+                        currentBlock.tab[j] = currentBlock.tab[j+1]; // shift to the left
+                    }
+                    currentBlock.nbEnregistrement--;
+
+                    if(currentBlock.nbEnregistrement==0){ // check if the block is empty
+                        blockState[currentBlockAdress].free = true;
+                        tableDallocation(fileName,'f',currentBlockAdress);
+
+                        if(prevBlockAdress != -1){ // the current block is empty and it is located at either the middle or the end of the chained blocks of the file
+
+                            // Update previous block's 'next' pointer
+                            block previousBlock;
+                            fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta) + sizeof(block) * prevBlockAdress, SEEK_SET);
+                            fread(&previousBlock, sizeof(block), 1, ms);
+                            
+                            // sets the previous block as the final block if there aren't other blocks
+                            previousBlock.next = currentBlock.next; // or links the previous block to the block that is after the current one (deallocating the current one bcz it's empty)
+                            
+                            //  Write the updated previous block back to the file
+                            fseek(ms, -sizeof(block), SEEK_CUR);
+                            fwrite(&previousBlock, sizeof(block), 1, ms);
+                        }
+                        else{ // the current block is empty and it's the first block of the file
+
+                            // Update the file metadata to point to the next block
+                            fileMeta->addressFirst = currentBlock.next;
+                        }
+
+                      fileMeta->sizeBlocks--; // if the block is empty then size of file in blocks decreases
+                    }
+
+                  fileMeta->sizeEnrgs--;  // if record was found and deleted then size of file in records decreases
+
+                  // write updated block and metadata
+                  fseek(ms, sizeof(BlockState)*MaxBlocks + sizeof(FilesMeta) + sizeof(block) * currentBlockAdress, SEEK_SET);
+                  fwrite(&currentBlock,sizeof(block),1,ms);
+
+                  //  presist on updating the global Blockstate table and the file metadata in the file ( saved in the virtual disk file ms)
+                  // ?????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
+                  fseek(ms,0,SEEK_SET); 
+                  fwrite(blockState, sizeof(BlockState),MaxBlocks,ms); 
+                  fwrite(&filesMeta,sizeof(filesMeta),1,ms); 
+
+                  fclose(ms);
+                  printf("record %d deleted succesfully \n");
+                  return;
+                }
+            }
+            prevBlockAdress = currentBlockAdress;
+            currentBlockAdress = currentBlock.next;
+        } 
+    }
+    else{
+        for (int i = 0; i < fileMeta->sizeBlocks; i++) {
+            currentBlockAdress = fileMeta->addressFirst + i;
+
+            // Read the current block
+            fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta) + sizeof(block) * currentBlockAdress, SEEK_SET);
+            fread(&currentBlock, sizeof(block), 1, ms);
+
+            // Search for the record in the block
+            for (int j = 0; j < currentBlock.nbEnregistrement; j++) {
+                if (currentBlock.tab[j].id == recordId) {
+                    // Shift remaining records
+                    for (int k = j; k < currentBlock.nbEnregistrement - 1; k++) {
+                        currentBlock.tab[k] = currentBlock.tab[k + 1];
+                    }
+                    currentBlock.nbEnregistrement--;
+
+                    // Check if block is empty
+                    if (currentBlock.nbEnregistrement == 0) {
+                        blockState[currentBlockAdress].free = true;
+                        tableDallocation(fileName, 'f', currentBlockAdress);
+                        fileMeta->sizeBlocks--;
+                    }
+
+                    fileMeta->sizeEnrgs--;
+
+                    // Write updated block and metadata
+                    fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta) + sizeof(block) * currentBlockAdress, SEEK_SET);
+                    fwrite(&currentBlock, sizeof(block), 1, ms);
+                    // same logic as in chained
+                    // ????????????????????????????????????????????????????????????????????????????????????????????????????????????,
+                    fseek(ms, 0, SEEK_SET);
+                    fwrite(blockState, sizeof(BlockState), MaxBlocks, ms);
+                    fwrite(&filesMeta, sizeof(FilesMeta), 1, ms);
+
+                    fclose(ms);
+                    printf("Record %d deleted successfully\n", recordId);
+                    return;
+                }
+            }
+        }
+    }
+    printf("Record %d not found in file %d!\n", recordId, fileId);
+    fclose(ms);
+} 
+
 int main() {
 
 }
