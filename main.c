@@ -577,6 +577,256 @@ void physicalDelete(char fileName[], int fileId, int recordId){
     fclose(ms);
 } 
 
+
+void saisir(FILE *f,int nbrREC,int a) //a = numero de block , nbrREC = (nbr total des record qu'en veut ajoute ) (tout lire depuis fichier metadone)
+{
+   block buffer;
+   buffer.address = 1 ;
+
+    int taille = ceil((double)nbrREC / 3); //on peut lire la taille depuis le fichier metadonne = size blocks
+
+    fseek(f, a*sizeof(buffer), SEEK_SET);
+
+    int k = 0;
+    for(int i=0; i<taille; i++)
+    {
+        buffer.nbEnregistrement = 0;
+        int j = 0;
+
+        //initialize the block
+        for (int t = 0; t < 3; t++) {
+        buffer.tab[t].id = 0;
+        strcpy(buffer.tab[t].data, "");
+        buffer.tab[t].isDeleted = false;
+ }
+
+        while(j<3 && k<nbrREC )
+        {
+            printf("donne l'identite :\n" );
+            printf("ID : ");
+            scanf("%d", &buffer.tab[j].id);
+            printf("donne data string :\n");
+            printf("Nom : ");
+            scanf(" %[^\n]", buffer.tab[j].data);
+            buffer.tab[j].isDeleted = false;
+            buffer.nbEnregistrement++; //incrementer le nombre d'enregistremant
+            j++;
+            k++;
+        }
+      //check if we completed all the place in one block
+            if(j==3){
+              buffer.isFree = false;
+            }else{
+              buffer.isFree = true;
+            }
+
+         buffer.address++ ; //incrementer le numero du block
+         buffer.next = -1; // contigue
+
+        fwrite(&buffer, sizeof(buffer), 1, f);
+    }
+}
+
+
+void Creation(FILE *MD) //teste si MD != null dans le menu principal si vrai apeler cette fonction
+{
+ int nbrREC;
+ char nomf [40];
+ int count = 0;
+ int currentMaxBlock  ;
+    int A ;
+    metaData Meta ;
+
+ printf("donne le nombre d' enregistremant < 50 : ");
+ scanf("%d",&nbrREC);
+
+ printf("donne le nom du fichier :/n");
+ printf("nom fichier = ");
+ scanf(" %[^\n]", nomf);
+
+ FILE *f =fopen(nomf,"rb+"); //ouverture du fichier
+ if(f == NULL){
+   printf("Error: Could not open the file '%s'. Make sure the file exists and you have proper permissions.\n", nomf);
+            return;
+ }
+
+  printf("file opened with success. \n");
+  count ++; //incrementer le nombre de fichier
+
+  Meta.sizeEnrgs = nbrREC;
+        Meta.fileId = count; // unique file ID
+
+  if(nbrREC % 3 == 0){ // calculer le nombre du block neccesaire pour ce fichier
+       Meta.sizeBlocks = nbrREC / 3;
+  }
+  else{
+    Meta.sizeBlocks = (nbrREC / 3) +1;
+  }
+
+  // Starting from the first block
+  currentMaxBlock = 0;
+
+  Meta.addressFirst = currentMaxBlock + 1; // Set starting address
+        currentMaxBlock += Meta.sizeBlocks;     // Update max block address
+
+
+
+        // Copy file name to metadata
+         strncpy(Meta.fileName, nomf, sizeof(Meta.fileName) - 1);
+         Meta.fileName[sizeof(Meta.fileName) - 1] = '\0'; // Ensure null termination
+
+
+   printf("write number '1' if you want organisation contigu trie else write number '2' if you want organisation chaine non trie. \n");
+   scanf("%d ", &A);
+
+ switch (A){
+        case 1:
+            Meta.modeOrganizationGlobal = true ; // contigue
+            Meta.modeOrganizationIntern = true ; // trie
+            break;
+
+        case 2:
+            Meta.modeOrganizationGlobal = false ; // chaine
+            Meta.modeOrganizationIntern = false ; // non trie
+            break;
+
+        default:
+            printf("Invalid number \n");
+            return;
+    }
+
+    fwrite(&Meta, sizeof(Meta), 1,MD); // Write metadata to the metadata file
+}
+
+
+void insertion(FILE* f,BlockState TAB[],int sizeTAB) // en utulise le tableau d'allocation
+{
+    rewind(f);
+    block buffer;
+    enregistrement Rec;
+
+    printf("Donne les information du nouveau enregistrement :\n");
+    printf("ID : ");
+    scanf("%d", &Rec.id);
+    printf("data : ");
+    scanf(" %[^\n]", Rec.data);
+
+    int aDernierBloc = TAB[sizeTAB-1].address ; // trouve l'index du dernier block
+
+    // Move to the last block
+    if (fseek(f, aDernierBloc * sizeof(block), SEEK_SET) != 0) {
+        printf("Error: Failed to move to the last block position.\n");
+        return;
+    }
+
+    // Read the last block
+    if (fread(&buffer, sizeof(block), 1, f) != 1) {
+        printf("Error: Failed to read the last block.\n");
+        return;
+    }
+
+    if(buffer.nbEnregistrement < 3) // si il ya de place dans le dernier block
+    {
+        buffer.tab[buffer.nbEnregistrement].id = Rec.id;
+        strcpy(buffer.tab[buffer.nbEnregistrement].data, Rec.data);
+       buffer.tab[buffer.nbEnregistrement].isDeleted = false;
+        buffer.nbEnregistrement++;
+
+  if(buffer.nbEnregistrement == 3)
+      {buffer.isFree = false ; //block is full
+  }
+
+      // Move back to update the block
+        if (fseek(f, -sizeof(block), SEEK_CUR) != 0) {
+            printf("Error: Failed to move back to update the block.\n");
+            return;
+        }
+
+        // Write the updated block
+        fwrite(&buffer, sizeof(block), 1, f);
+
+    }
+    else                               // si ya pas il faut ajoute dans un autre block
+    {
+        // Reinitialize buffer for the new block
+        buffer.nbEnregistrement = 1;    // The new block has one record
+        buffer.isFree = true;           // The new block is initially not full
+        buffer.next = -1;
+
+        for (int i = 0; i < 3; i++) {   // Reset all slots in the block
+        buffer.tab[i].id = 0;
+        strcpy(buffer.tab[i].data, "");
+        buffer.tab[i].isDeleted = false;
+        }
+
+        // Insert the new record into the first case in the vector
+        buffer.tab[0].id = Rec.id;
+        strcpy(buffer.tab[0].data, Rec.data);
+        buffer.tab[0].isDeleted = false;
+
+
+        // Write the new block to the file
+        if (fseek(f, (aDernierBloc + 1) * sizeof(block), SEEK_SET) != 0) {
+            printf("Error: Failed to move to the position for the new block.\n");
+            return;
+        }
+
+        fwrite(&buffer, sizeof(block), 1, f);
+        printf("A new block has been created and the record has been inserted.\n");
+    }
+
+}
+
+
+void rechercheEnreg(FILE *f, int E[], int ID,BlockState TAB [],int sizeTAB) //ID donne par user
+{
+    block buffer;
+    rewind(f);
+
+    int aPremierBloc = TAB[0].address;
+    int aDernierBloc = TAB[sizeTAB-1].address ;
+
+    fseek(f, aPremierBloc*sizeof(buffer), SEEK_SET); //aller au premier block
+
+    for(int i=0; i<sizeTAB; i++) //parcourir jusq au dernier block
+    {
+        fread(&buffer, sizeof(buffer), 1, f);
+        int j = 0;
+        while(j<buffer.nbEnregistrement)
+        {
+            if(buffer.tab[j].id == ID)
+            {
+                E[0] = i+1;
+                E[1] = j+1;
+                printf("numero du Bloc: %d, deplacement: %d\n", E[0], E[1]);
+                return;
+            }
+            j++;
+        }
+    }
+    printf("l’enregistrement recherché n’existe pas. !! ");
+    return;
+}
+
+
+void suplogique(FILE *f,int ID,int E[]) // on utilise le meme id de la recherche
+{   block buffer;
+
+ rewind(f);
+
+ fseek(f,E[0]*sizeof(buffer),SEEK_SET); //aller a la position du block qui a le ID
+
+  fread(&buffer.tab[E[1]].id, sizeof(int), 1, f); //E[1] = la position de l'eregistremant
+
+  buffer.tab[E[1]].isDeleted = true; // record logicement suprime
+  fseek(f, -sizeof(int), SEEK_CUR);
+  fwrite(&buffer.tab[E[1]].isDeleted, sizeof(bool), 1, f);
+
+
+    printf("Etudiant %d supprimé logiquement avec succés !\n", ID);
+
+}
+
 int main() {
 
 }
