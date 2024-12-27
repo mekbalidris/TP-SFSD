@@ -344,9 +344,9 @@ void gestionDeStockage(char fileName[], int requiredBlocks) {
 
 // Function to create a new data file
 
-void insertRecordChained(char fileName[], int fileId, enregistrement record){
+void insertRecordChained(char fileName[], int fileId, enregistrement record) {
     FILE *ms = fopen(fileName, "rb+");
-    if(ms==NULL){
+    if(ms == NULL) {
         printf("Error opening file\n");
         return;
     }
@@ -355,85 +355,107 @@ void insertRecordChained(char fileName[], int fileId, enregistrement record){
     FilesMeta filesMeta; 
     block currentBlock;
 
-    fread(BlockState,sizeof(BlockState),MaxBlocks,ms); // load block state 
-    fread(&filesMeta,sizeof(FilesMeta),1,ms); // load files metadata
+    fread(BlockState, sizeof(BlockState), MaxBlocks, ms);
+    fread(&filesMeta, sizeof(FilesMeta), 1, ms);
 
-    metaData *fileMeta = NULL; // pointer to the file metadata
-    for (int i = 0; i < filesMeta.numberOf_files; i++) { 
-        if (filesMeta.filesArray[i].fileId == fileId) { 
-            fileMeta = &filesMeta.filesArray[i]; // assign pointer to file metadata (theres diffrence between fileMeta and file(s)Meta )
-            break; 
+    metaData *fileMeta = NULL;
+    for (int i = 0; i < filesMeta.numberOf_files; i++) {
+        if (filesMeta.filesArray[i].fileId == fileId) {
+            fileMeta = &filesMeta.filesArray[i];
+            break;
         }
     }
 
-     if (fileMeta == NULL) {
+    if (fileMeta == NULL) {
         printf("File not found!\n");
         fclose(ms);
         return;
     }
 
     int currentBlockAddress = fileMeta->addressFirst;
-    int isSorted = fileMeta->modeOrganizationIntern;
+    bool isSorted = fileMeta->modeOrganizationIntern;
 
+    // Find the appropriate block for insertion
     while (currentBlockAddress != -1) {
-        fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta) + sizeof(block) * currentBlockAddress, SEEK_SET); // 
-        fread(&currentBlock, sizeof(block), 1, ms); // read current block data
-        if(currentBlock.nbEnregistrement<3){
-            if(!isSorted){
-                currentBlock.tab[currentBlock.nbEnregistrement]= record; // add new record to the block
-            }
-            else{
-                // block is sorted , find the correct position for the new record
-                int i = currentBlock.nbEnregistrement - 1;
-                while(i>=0 && currentBlock.tab[i].id > record.id){
-                    currentBlock.tab[i+1] = currentBlock.tab[i]; // shift elements to the right
-                    i--;
-                }
-                currentBlock.tab[i+1] = currentBlock.tab[i];
-            }
-        }
-        currentBlock.nbEnregistrement++;
-        fseek(ms, -sizeof(block), SEEK_CUR); // move back to the block data
-        fwrite(&currentBlock, sizeof(block), 1, ms); // write the block data back to the file
-        fileMeta->sizeEnrgs++; 
-        fclose(ms);
-        return;
+        fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta) + sizeof(block) * currentBlockAddress, SEEK_SET);
+        fread(&currentBlock, sizeof(block), 1, ms);
         
-        currentBlockAddress = currentBlock.next; // move to the next block
-    }
-
-    // if we reach this point, it means the file is full and we need to add a new block
-    for(int newBlockAdress = 0; newBlockAdress < MaxBlocks; newBlockAdress++){
-        if(BlockState[newBlockAdress].free){
-            BlockState[newBlockAdress].free = false;
-            tableDallocation(fileName,'a',newBlockAdress); // update the block allocation table
-
-            // initialize the new block
-            memset(&currentBlock,0,sizeof(block)); // reset the block data
-            currentBlock.address = newBlockAdress;
-            currentBlock.nbEnregistrement = 1;
-            currentBlock.tab[0] = record; // add new record as the first record in the new block
-            currentBlock.next = -1;
-
-            // update the last block next pointer
-            fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta) + sizeof(block) * fileMeta->sizeBlocks, SEEK_SET); // move to the end of the file
-            fread(&currentBlock, sizeof(block), 1, ms); // read the last block data
-            currentBlock.next = newBlockAdress; // link the new block to the last block
-            fseek(ms, -sizeof(block), SEEK_CUR); 
-            fwrite(&currentBlock, sizeof(block), 1, ms); // write the new block data back to the file
-
-            // write the new block data to the file
-            fseek(ms, sizeof(BlockState)*MaxBlocks + sizeof(FilesMeta) + sizeof(block)*newBlockAdress, SEEK_SET); // move to the new block data(soon to be the new end of the file)
-            fwrite(&currentBlock, sizeof(block), 1, ms); // write the new block data at the end of the file
-
-            // update metaData
-            fileMeta->sizeBlocks++;
+        if (currentBlock.nbEnregistrement < 3) {
+            // Found space in current block
+            int insertPos = currentBlock.nbEnregistrement;
+            
+            if (isSorted) {
+                // Find correct position in sorted block
+                insertPos = 0;
+                while (insertPos < currentBlock.nbEnregistrement && 
+                       currentBlock.tab[insertPos].id < record.id) {
+                    insertPos++;
+                }
+                
+                // Shift records to make space
+                for (int i = currentBlock.nbEnregistrement; i > insertPos; i--) {
+                    currentBlock.tab[i] = currentBlock.tab[i-1];
+                }
+            }
+            
+            // Insert the record
+            currentBlock.tab[insertPos] = record;
+            currentBlock.nbEnregistrement++;
+            
+            // Write back the updated block
+            fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta) + sizeof(block) * currentBlockAddress, SEEK_SET);
+            fwrite(&currentBlock, sizeof(block), 1, ms);
+            
             fileMeta->sizeEnrgs++;
+            
+            // Update file metadata
+            fseek(ms, sizeof(BlockState) * MaxBlocks, SEEK_SET);
+            fwrite(&filesMeta, sizeof(FilesMeta), 1, ms);
+            
             fclose(ms);
             return;
         }
+        
+        currentBlockAddress = currentBlock.next;
     }
-    printf("Error : no free block available\n");
+
+    // Need to create new block
+    int newBlockAddress = -1;
+    for (int i = 0; i < MaxBlocks; i++) {
+        if (BlockState[i].free) {
+            newBlockAddress = i;
+            break;
+        }
+    }
+
+    if (newBlockAddress == -1) {
+        printf("No free blocks available!\n");
+        fclose(ms);
+        return;
+    }
+
+    // Initialize new block
+    memset(&currentBlock, 0, sizeof(block));
+    currentBlock.address = newBlockAddress;
+    currentBlock.nbEnregistrement = 1;
+    currentBlock.tab[0] = record;
+    currentBlock.next = -1;
+    currentBlock.isFree = false;
+
+    // Update block allocation
+    BlockState[newBlockAddress].free = false;
+    tableDallocation(fileName, 'a', newBlockAddress);
+
+    // Write new block
+    fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta) + sizeof(block) * newBlockAddress, SEEK_SET);
+    fwrite(&currentBlock, sizeof(block), 1, ms);
+
+    // Update file metadata
+    fileMeta->sizeBlocks++;
+    fileMeta->sizeEnrgs++;
+    fseek(ms, sizeof(BlockState) * MaxBlocks, SEEK_SET);
+    fwrite(&filesMeta, sizeof(FilesMeta), 1, ms);
+
     fclose(ms);
 }
 
@@ -840,72 +862,97 @@ void loadFile(char fileName[], char mode) {
     int numRecords;
     char filename[40];
     
-    fread(blockState, sizeof(BlockState), MaxBlocks, ms);
-    fread(&filesMeta, sizeof(FilesMeta), 1, ms);
-    
-    printf("Enter filename: ");
-    scanf("%s", filename);
-    printf("Enter number of records: ");
-    scanf("%d", &numRecords);
-    
-    int requiredBlocks = (numRecords + 2) / 3;
-    int freeBlockCount = 0;
-    int firstFreeBlock = -1;
-    
-    for (int i = 0; i < MaxBlocks; i++) {
-        if (blockState[i].free) {
-            if (firstFreeBlock == -1) firstFreeBlock = i;
-            freeBlockCount++;
-            if (freeBlockCount >= requiredBlocks) break;
-        }
-    }
-    
-    if (freeBlockCount < requiredBlocks) {
-        printf("Not enough free blocks\n");
+    // Read existing metadata
+    if (fread(blockState, sizeof(BlockState), MaxBlocks, ms) != MaxBlocks ||
+        fread(&filesMeta, sizeof(FilesMeta), 1, ms) != 1) {
+        printf("Error reading file metadata\n");
         fclose(ms);
         return;
     }
     
+    // Get file information
+    printf("Enter filename: ");
+    scanf("%39s", filename);  // Prevent buffer overflow
+    printf("Enter number of records: ");
+    scanf("%d", &numRecords);
+    
+    if (numRecords <= 0) {
+        printf("Invalid number of records\n");
+        fclose(ms);
+        return;
+    }
+
+    // Calculate required blocks and check availability
+    int requiredBlocks = (numRecords + 2) / 3;
+    int freeBlockCount = 0;
+    int firstFreeBlock = -1;
+    
+    for (int i = 0; i < MaxBlocks && freeBlockCount < requiredBlocks; i++) {
+        if (blockState[i].free) {
+            if (firstFreeBlock == -1) firstFreeBlock = i;
+            freeBlockCount++;
+        }
+    }
+    
+    if (freeBlockCount < requiredBlocks) {
+        printf("Not enough free blocks. Need %d, but only %d available\n", 
+               requiredBlocks, freeBlockCount);
+        fclose(ms);
+        return;
+    }
+
+    // Initialize new file metadata
     strncpy(newFile.fileName, filename, sizeof(newFile.fileName) - 1);
+    newFile.fileName[sizeof(newFile.fileName) - 1] = '\0';
     newFile.fileId = filesMeta.numberOf_files + 1;
     newFile.sizeBlocks = requiredBlocks;
     newFile.sizeEnrgs = numRecords;
     newFile.addressFirst = firstFreeBlock;
     newFile.modeOrganizationGlobal = (mode == 'c') ? false : true;
-    
+    newFile.modeOrganizationIntern = false;  // Default to unsorted
+
+    // Initialize blocks
     block newBlock;
     int currentBlock = firstFreeBlock;
     int recordsLeft = numRecords;
     
     for (int i = 0; i < requiredBlocks; i++) {
-        // Manual block initialization
+        memset(&newBlock, 0, sizeof(block));
         newBlock.address = currentBlock;
         newBlock.nbEnregistrement = (recordsLeft >= 3) ? 3 : recordsLeft;
-        newBlock.next = -1;
+        newBlock.next = (mode == 'c' && i < requiredBlocks - 1) ? currentBlock + 1 : -1;
         newBlock.isFree = false;
-        
-        // Initialize all records in block
-        for(int j = 0; j < 3; j++) {
-            newBlock.tab[j].id = 0;
-            strcpy(newBlock.tab[j].data, "");
-            newBlock.tab[j].isDeleted = false;
-        }
         
         blockState[currentBlock].free = false;
         tableDallocation(fileName, 'a', currentBlock);
         
         fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta) + sizeof(block) * currentBlock, SEEK_SET);
-        fwrite(&newBlock, sizeof(block), 1, ms);
+        if (fwrite(&newBlock, sizeof(block), 1, ms) != 1) {
+            printf("Error writing block %d\n", currentBlock);
+            fclose(ms);
+            return;
+        }
         
         recordsLeft -= newBlock.nbEnregistrement;
         currentBlock++;
+    }
+    
+    // Update file metadata
+    if (filesMeta.numberOf_files >= MaxBlocks) {
+        printf("Maximum number of files reached\n");
+        fclose(ms);
+        return;
     }
     
     filesMeta.filesArray[filesMeta.numberOf_files] = newFile;
     filesMeta.numberOf_files++;
     
     fseek(ms, sizeof(BlockState), SEEK_SET);
-    fwrite(&filesMeta, sizeof(FilesMeta), 1, ms);
+    if (fwrite(&filesMeta, sizeof(FilesMeta), 1, ms) != 1) {
+        printf("Error updating file metadata\n");
+        fclose(ms);
+        return;
+    }
     
     printf("File loaded successfully\n");
     fclose(ms);
@@ -1027,6 +1074,510 @@ void automaticFill(char fileName[], int fileId, int numberOfRecords) {
     fclose(ms);
 }
 
-int main() {
+void defragmentFile(char fileName[], int fileId) {
+    FILE *ms = fopen(fileName, "rb+");
+    if (ms == NULL) {
+        printf("Error opening file\n");
+        return;
+    }
 
+    BlockState blockState[MaxBlocks];
+    FilesMeta filesMeta;
+    block currentBlock;
+
+    // Read block states and file metadata
+    fread(blockState, sizeof(BlockState), MaxBlocks, ms);
+    fread(&filesMeta, sizeof(FilesMeta), 1, ms);
+
+    // Find the file metadata
+    metaData *fileMeta = NULL;
+    for (int i = 0; i < filesMeta.numberOf_files; i++) {
+        if (filesMeta.filesArray[i].fileId == fileId) {
+            fileMeta = &filesMeta.filesArray[i];
+            break;
+        }
+    }
+
+    if (fileMeta == NULL) {
+        printf("File not found!\n");
+        fclose(ms);
+        return;
+    }
+
+    int currentBlockAddress = fileMeta->addressFirst;
+    int totalValidRecords = 0;
+
+    // First pass: Count valid records
+    while (currentBlockAddress != -1) {
+        fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta) + sizeof(block) * currentBlockAddress, SEEK_SET);
+        fread(&currentBlock, sizeof(block), 1, ms);
+
+        for (int i = 0; i < currentBlock.nbEnregistrement; i++) {
+            if (!currentBlock.tab[i].isDeleted) {
+                totalValidRecords++;
+            }
+        }
+        currentBlockAddress = currentBlock.next;
+    }
+
+    // Calculate new required blocks
+    int newRequiredBlocks = (totalValidRecords + 2) / 3;
+    
+    // Temporary array to store valid records
+    enregistrement *validRecords = malloc(totalValidRecords * sizeof(enregistrement));
+    if (validRecords == NULL) {
+        printf("Memory allocation failed\n");
+        fclose(ms);
+        return;
+    }
+
+    // Second pass: Collect valid records
+    currentBlockAddress = fileMeta->addressFirst;
+    int validIndex = 0;
+    
+    while (currentBlockAddress != -1) {
+        fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta) + sizeof(block) * currentBlockAddress, SEEK_SET);
+        fread(&currentBlock, sizeof(block), 1, ms);
+
+        for (int i = 0; i < currentBlock.nbEnregistrement; i++) {
+            if (!currentBlock.tab[i].isDeleted) {
+                validRecords[validIndex++] = currentBlock.tab[i];
+            }
+        }
+        
+        // Mark current block as free
+        blockState[currentBlockAddress].free = true;
+        tableDallocation(fileName, 'f', currentBlockAddress);
+        
+        int nextBlock = currentBlock.next;
+        currentBlockAddress = nextBlock;
+    }
+
+    // Sort valid records if file is organized
+    if (fileMeta->modeOrganizationIntern) {
+        for (int i = 0; i < totalValidRecords - 1; i++) {
+            for (int j = 0; j < totalValidRecords - i - 1; j++) {
+                if (validRecords[j].id > validRecords[j + 1].id) {
+                    enregistrement temp = validRecords[j];
+                    validRecords[j] = validRecords[j + 1];
+                    validRecords[j + 1] = temp;
+                }
+            }
+        }
+    }
+
+    // Find new blocks for reorganized file
+    int firstNewBlock = -1;
+    int currentNewBlock = -1;
+    int recordsWritten = 0;
+
+    // Redistribute records into new blocks
+    for (int i = 0; i < newRequiredBlocks; i++) {
+        // Find a free block
+        int newBlockAddress = -1;
+        for (int j = 0; j < MaxBlocks; j++) {
+            if (blockState[j].free) {
+                newBlockAddress = j;
+                break;
+            }
+        }
+
+        if (newBlockAddress == -1) {
+            printf("Error: No free blocks available\n");
+            free(validRecords);
+            fclose(ms);
+            return;
+        }
+
+        // Initialize new block
+        memset(&currentBlock, 0, sizeof(block));
+        currentBlock.address = newBlockAddress;
+        currentBlock.isFree = false;
+        currentBlock.next = -1;
+
+        // Fill block with records
+        int recordsInThisBlock = 0;
+        while (recordsWritten < totalValidRecords && recordsInThisBlock < 3) {
+            currentBlock.tab[recordsInThisBlock] = validRecords[recordsWritten];
+            recordsWritten++;
+            recordsInThisBlock++;
+        }
+        currentBlock.nbEnregistrement = recordsInThisBlock;
+
+        // Update block linkage
+        if (firstNewBlock == -1) {
+            firstNewBlock = newBlockAddress;
+        } else {
+            // Update previous block's next pointer
+            block prevBlock;
+            fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta) + sizeof(block) * currentNewBlock, SEEK_SET);
+            fread(&prevBlock, sizeof(block), 1, ms);
+            prevBlock.next = newBlockAddress;
+            fseek(ms, -sizeof(block), SEEK_CUR);
+            fwrite(&prevBlock, sizeof(block), 1, ms);
+        }
+
+        // Write new block
+        blockState[newBlockAddress].free = false;
+        tableDallocation(fileName, 'a', newBlockAddress);
+        fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta) + sizeof(block) * newBlockAddress, SEEK_SET);
+        fwrite(&currentBlock, sizeof(block), 1, ms);
+
+        currentNewBlock = newBlockAddress;
+    }
+
+    // Update file metadata
+    fileMeta->addressFirst = firstNewBlock;
+    fileMeta->sizeBlocks = newRequiredBlocks;
+    fileMeta->sizeEnrgs = totalValidRecords;
+
+    // Write updated metadata
+    fseek(ms, sizeof(BlockState), SEEK_SET);
+    fwrite(&filesMeta, sizeof(FilesMeta), 1, ms);
+
+    free(validRecords);
+    fclose(ms);
+    printf("File defragmentation completed successfully.\n");
+}
+
+void renameFile(char fileName[], int fileId, char newName[]) {
+    FILE *ms = fopen(fileName, "rb+");
+    if (ms == NULL) {
+        printf("Error opening file\n");
+        return;
+    }
+
+    BlockState blockState[MaxBlocks];
+    FilesMeta filesMeta;
+
+    // Read metadata
+    fread(blockState, sizeof(BlockState), MaxBlocks, ms);
+    fread(&filesMeta, sizeof(FilesMeta), 1, ms);
+
+    // Find the file
+    bool found = false;
+    for (int i = 0; i < filesMeta.numberOf_files; i++) {
+        if (filesMeta.filesArray[i].fileId == fileId) {
+            // Update filename
+            strncpy(filesMeta.filesArray[i].fileName, newName, sizeof(filesMeta.filesArray[i].fileName) - 1);
+            filesMeta.filesArray[i].fileName[sizeof(filesMeta.filesArray[i].fileName) - 1] = '\0';
+            found = true;
+            break;
+        }
+    }
+
+    if (!found) {
+        printf("File with ID %d not found\n", fileId);
+        fclose(ms);
+        return;
+    }
+
+    // Write updated metadata
+    fseek(ms, sizeof(BlockState), SEEK_SET);
+    fwrite(&filesMeta, sizeof(FilesMeta), 1, ms);
+
+    fclose(ms);
+    printf("File renamed successfully\n");
+}
+
+void deleteFile(char fileName[], int fileId) {
+    FILE *ms = fopen(fileName, "rb+");
+    if (ms == NULL) {
+        printf("Error opening file\n");
+        return;
+    }
+
+    BlockState blockState[MaxBlocks];
+    FilesMeta filesMeta;
+
+    // Read metadata
+    fread(blockState, sizeof(BlockState), MaxBlocks, ms);
+    fread(&filesMeta, sizeof(FilesMeta), 1, ms);
+
+    // Find the file
+    int fileIndex = -1;
+    for (int i = 0; i < filesMeta.numberOf_files; i++) {
+        if (filesMeta.filesArray[i].fileId == fileId) {
+            fileIndex = i;
+            break;
+        }
+    }
+
+    if (fileIndex == -1) {
+        printf("File with ID %d not found\n", fileId);
+        fclose(ms);
+        return;
+    }
+
+    // Free all blocks used by the file
+    int currentBlock = filesMeta.filesArray[fileIndex].addressFirst;
+    block currentBlockData;
+
+    while (currentBlock != -1) {
+        // Read current block to get next block address
+        fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta) + sizeof(block) * currentBlock, SEEK_SET);
+        fread(&currentBlockData, sizeof(block), 1, ms);
+        
+        // Mark block as free
+        blockState[currentBlock].free = true;
+        tableDallocation(fileName, 'f', currentBlock);
+
+        int nextBlock = currentBlockData.next;
+        
+        // Clear block data
+        memset(&currentBlockData, 0, sizeof(block));
+        currentBlockData.address = currentBlock;
+        currentBlockData.isFree = true;
+        currentBlockData.next = -1;
+        
+        // Write cleared block back
+        fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta) + sizeof(block) * currentBlock, SEEK_SET);
+        fwrite(&currentBlockData, sizeof(block), 1, ms);
+
+        currentBlock = nextBlock;
+    }
+
+    // Remove file from metadata by shifting remaining files
+    for (int i = fileIndex; i < filesMeta.numberOf_files - 1; i++) {
+        filesMeta.filesArray[i] = filesMeta.filesArray[i + 1];
+    }
+    filesMeta.numberOf_files--;
+
+    // Write updated metadata
+    fseek(ms, sizeof(BlockState), SEEK_SET);
+    fwrite(&filesMeta, sizeof(FilesMeta), 1, ms);
+
+    fclose(ms);
+    printf("File deleted successfully\n");
+}
+
+int main() {
+    char fileName[40] = "disk.bin";  // Default disk file name
+    int choice;
+    bool running = true;
+
+    while (running) {
+        printf("\n=== SECONDARY MEMORY MANAGEMENT SYSTEM ===\n");
+        printf("1.  Initialize Secondary Memory\n");
+        printf("2.  Create and Load File\n");
+        printf("3.  Display Secondary Memory State (Graphical)\n");
+        printf("4.  Display File Metadata\n");
+        printf("5.  Search Record by ID\n");
+        printf("6.  Insert New Record\n");
+        printf("7.  Delete Record\n");
+        printf("8.  Defragment File\n");
+        printf("9.  Delete File\n");
+        printf("10. Rename File\n");
+        printf("11. Compact Secondary Memory\n");
+        printf("12. Clear Secondary Memory\n");
+        printf("13. Exit\n");
+        printf("Choose an option (1-13): ");
+        scanf("%d", &choice);
+        
+        switch (choice) {
+            case 1: {
+                initialisationDisque(fileName);
+                printf("Secondary memory initialized successfully.\n");
+                break;
+            }
+            
+            case 2: {
+                char mode;
+                printf("Choose organization mode (c for chained, t for contiguous): ");
+                scanf(" %c", &mode);
+                loadFile(fileName, mode);
+                break;
+            }
+            
+            case 3: {
+                FILE *ms = fopen(fileName, "rb");
+                if (ms == NULL) {
+                    printf("Error opening disk file\n");
+                    break;
+                }
+                
+                BlockState blockStates[MaxBlocks];
+                FilesMeta filesMeta;
+                block currentBlock;
+                
+                fread(blockStates, sizeof(BlockState), MaxBlocks, ms);
+                fread(&filesMeta, sizeof(FilesMeta), 1, ms);
+                
+                printf("\nSecondary Memory State:\n");
+                for (int i = 0; i < MaxBlocks; i++) {
+                    if (blockStates[i].free) {
+                        printf("\033[0;32m[FREE]\033[0m ");  // Green for free blocks
+                    } else {
+                        printf("\033[0;31m[USED]\033[0m ");  // Red for used blocks
+                        
+                        // Read block to get number of records
+                        fseek(ms, sizeof(BlockState) * MaxBlocks + sizeof(FilesMeta) + i * sizeof(block), SEEK_SET);
+                        fread(&currentBlock, sizeof(block), 1, ms);
+                        
+                        // Find which file this block belongs to
+                        for (int j = 0; j < filesMeta.numberOf_files; j++) {
+                            if (i >= filesMeta.filesArray[j].addressFirst && 
+                                i < filesMeta.filesArray[j].addressFirst + filesMeta.filesArray[j].sizeBlocks) {
+                                printf("'%s' (%d records) ", 
+                                       filesMeta.filesArray[j].fileName,
+                                       currentBlock.nbEnregistrement);
+                                break;
+                            }
+                        }
+                    }
+                    if ((i + 1) % 5 == 0) printf("\n");  // New line every 5 blocks
+                }
+                fclose(ms);
+                break;
+            }
+            
+            case 4: {
+                FILE *ms = fopen(fileName, "rb");
+                if (ms == NULL) {
+                    printf("Error opening disk file\n");
+                    break;
+                }
+                
+                FilesMeta filesMeta;
+                fseek(ms, sizeof(BlockState) * MaxBlocks, SEEK_SET);
+                fread(&filesMeta, sizeof(FilesMeta), 1, ms);
+                
+                printf("\nFile Metadata:\n");
+                printf("%-20s %-8s %-12s %-12s %-15s %-15s %-15s\n",
+                       "Filename", "FileID", "Total Blocks", "Total Records", "First Block", "Global Org", "Internal Org");
+                printf("--------------------------------------------------------------------------------\n");
+                
+                for (int i = 0; i < filesMeta.numberOf_files; i++) {
+                    printf("%-20s %-8d %-12d %-12d %-15d %-15s %-15s\n",
+                           filesMeta.filesArray[i].fileName,
+                           filesMeta.filesArray[i].fileId,
+                           filesMeta.filesArray[i].sizeBlocks,
+                           filesMeta.filesArray[i].sizeEnrgs,
+                           filesMeta.filesArray[i].addressFirst,
+                           filesMeta.filesArray[i].modeOrganizationGlobal ? "Contiguous" : "Chained",
+                           filesMeta.filesArray[i].modeOrganizationIntern ? "Sorted" : "Unsorted");
+                }
+                fclose(ms);
+                break;
+            }
+            
+            case 5: {
+                int fileId, recordId;
+                printf("Enter File ID: ");
+                scanf("%d", &fileId);
+                printf("Enter Record ID to search: ");
+                scanf("%d", &recordId);
+                searchRecordChained(fileName, fileId, recordId);
+                break;
+            }
+            
+            case 6: {
+            int fileId;
+            enregistrement newRecord;
+
+
+            printf("Enter File ID: ");
+            if (scanf("%d", &fileId) != 1) {
+                printf("Invalid File ID. Please enter a numeric value.\n");
+                break;
+            }
+            getchar(); // Clear buffer
+
+            // Get Record ID
+            printf("Enter Record ID: ");
+            if (scanf("%d", &newRecord.id) != 1) {
+                printf("Invalid Record ID. Please enter a numeric value.\n");
+                break;
+            }
+            getchar(); // Clear buffer
+
+            // Get Record Data
+            printf("Enter Record Data: ");
+            if (scanf(" %[^\n]", newRecord.data) != 1) {
+                printf("Invalid Record Data. Please try again.\n");
+                break;
+            }
+            newRecord.isDeleted = false;
+
+            // Call the insertion function
+            insertRecordChained(fileName, fileId, newRecord);
+            break;
+        }
+
+            
+            case 7: {
+                int fileId, recordId;
+                char deleteType;
+                printf("Enter File ID: ");
+                scanf("%d", &fileId);
+                printf("Enter Record ID to delete: ");
+                scanf("%d", &recordId);
+                printf("Choose delete type (p for physical, l for logical): ");
+                scanf(" %c", &deleteType);
+                
+                if (deleteType == 'p') {
+                    physicalDelete(fileName, fileId, recordId);
+                } else {
+                    // Call logical delete function (not implemented in the provided code)
+                    printf("Logical delete not implemented\n");
+                }
+                break;
+            }
+            
+            case 8: {
+                int fileId;
+                printf("Enter File ID to defragment: ");
+                scanf("%d", &fileId);
+                // Call defragment function (not implemented in the provided code)
+                printf("File defragmentation not implemented\n");
+                break;
+            }
+            
+            case 9: {
+                int fileId;
+                printf("Enter File ID to delete: ");
+                scanf("%d", &fileId);
+                // Call delete file function (not implemented in the provided code)
+                printf("File deletion not implemented\n");
+                break;
+            }
+            
+            case 10: {
+                int fileId;
+                char newName[40];
+                printf("Enter File ID to rename: ");
+                scanf("%d", &fileId);
+                printf("Enter new filename: ");
+                scanf(" %[^\n]", newName);
+                // Call rename function (not implemented in the provided code)
+                printf("File rename not implemented\n");
+                break;
+            }
+            
+            case 11: {
+                compactage(fileName);
+                printf("Secondary memory compacted successfully.\n");
+                break;
+            }
+            
+            case 12: {
+                vider(fileName);
+                printf("Secondary memory cleared successfully.\n");
+                break;
+            }
+            
+            case 13: {
+                running = false;
+                printf("Exiting program...\n");
+                break;
+            }
+            
+            default: {
+                printf("Invalid option. Please choose a number between 1 and 13.\n");
+                break;
+            }
+        }
+    }
+    
+    return 0;
 }
