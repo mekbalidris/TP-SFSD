@@ -42,19 +42,19 @@ typedef struct {
 } SecondaryMemory;
 
 // function prototypes
-void initializeDisk(SecondaryMemory *disk);
-void createFile(SecondaryMemory *disk);
-void loadFile(SecondaryMemory *disk, int fileId);
-void insertRecord(SecondaryMemory *disk, int fileId);
-void searchRecord(SecondaryMemory *disk, int fileId, int recordId);
-void deleteRecord(SecondaryMemory *disk, int fileId, int recordId, bool isPhysical);
-void defragmentFile(SecondaryMemory *disk, int fileId);
-void renameFile(SecondaryMemory *disk, int fileId, char *newName);
-void deleteFile(SecondaryMemory *disk, int fileId);
-void compactDisk(SecondaryMemory *disk);
-void clearDisk(SecondaryMemory *disk);
-void displayDiskState(SecondaryMemory *disk);
-void displayMetadata(SecondaryMemory *disk);
+void initializeDisk(SecondaryMemory *disk); //moh
+void createFile(SecondaryMemory *disk); //idris
+void loadFile(SecondaryMemory *disk, int fileId); //moh
+//void insertRecord(SecondaryMemory *disk, int fileId);                                   //Madjda
+void searchRecord(SecondaryMemory *disk, int fileId, int recordId); //idris
+void deleteRecord(SecondaryMemory *disk, int fileId, int recordId, bool isPhysical); //mouhaimen
+//void defragmentFile(SecondaryMemory *disk, int fileId);                                 //Madjda
+void renameFile(SecondaryMemory *disk, int fileId, char *newName); // mouhaimen
+void deleteFile(SecondaryMemory *disk, int fileId); //youcef
+//void compactDisk(SecondaryMemory *disk);                                                //Madjda
+void clearDisk(SecondaryMemory *disk); //youcef
+void displayDiskState(SecondaryMemory *disk); //youcef
+void displayMetadata(SecondaryMemory *disk);  //youcef
 
 // main function to run the program
 int main() {
