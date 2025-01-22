@@ -190,11 +190,13 @@ void initializeDisk(SecondaryMemory *disk) {
 
 // function to create a new file
 void createFile(SecondaryMemory *disk) {
+    // check if the maximum number of files has been reached
     if (disk->fileCount >= MaxBlocks) {
         printf("maximum number of files reached!\n");
         return;
     }
 
+    // create a new file and get its details from the user
     FileMeta newFile;
     printf("enter file name: ");
     scanf("%s", newFile.fileName);
@@ -207,34 +209,75 @@ void createFile(SecondaryMemory *disk) {
 
     // calculate how many blocks are needed for the file
     int requiredBlocks = ceil((double)newFile.sizeRecords / BlockSize);
+
+    // check how many free blocks are available on the disk
     int freeBlocks = 0;
     for (int i = 0; i < MaxBlocks; i++) {
         if (disk->blockAllocation[i]) freeBlocks++;
     }
 
+    // if there aren't enough free blocks, print an error and exit
     if (freeBlocks < requiredBlocks) {
         printf("not enough free blocks. required: %d, available: %d\n", requiredBlocks, freeBlocks);
         return;
     }
 
-    // allocate blocks for the file
-    newFile.firstBlock = -1;
-    int prevBlock = -1;
-    for (int i = 0; i < MaxBlocks && requiredBlocks > 0; i++) {
-        if (disk->blockAllocation[i]) {
-            disk->blockAllocation[i] = false;
-            disk->blocks[i].isFree = false;
-            if (newFile.firstBlock == -1) newFile.firstBlock = i;
-            if (prevBlock != -1) disk->blocks[prevBlock].nextBlock = i;
-            prevBlock = i;
-            requiredBlocks--;
+    // initialize file metadata
+    newFile.firstBlock = -1; // No blocks allocated yet
+    newFile.sizeBlocks = requiredBlocks;
+    newFile.fileId = disk->fileCount;
+
+    // allocate blocks based on the file's organization (contiguous or chained)
+    int prevBlock = -1; // Tracks the last block allocated to the file
+
+    if (newFile.isContiguous) {
+        // try to find contiguous blocks for contiguous allocation
+        bool foundContiguous = false;
+        for (int i = 0; i <= MaxBlocks - requiredBlocks; i++) {
+            bool isContiguousFree = true;
+            // check if the next `requiredBlocks` blocks are free
+            for (int j = i; j < i + requiredBlocks; j++) {
+                if (!disk->blockAllocation[j]) {
+                    isContiguousFree = false;
+                    break;
+                }
+            }
+            // if contiguous blocks are found, allocate them
+            if (isContiguousFree) {
+                for (int j = i; j < i + requiredBlocks; j++) {
+                    disk->blockAllocation[j] = false; // mark block as used
+                    disk->blocks[j].isFree = false;   // mark block as used
+                    if (newFile.firstBlock == -1) newFile.firstBlock = j; // set first block
+                    if (prevBlock != -1) disk->blocks[prevBlock].nextBlock = j; // link blocks
+                    prevBlock = j;
+                }
+                foundContiguous = true;
+                break;
+            }
+        }
+        // if no contiguous blocks are found, print an error and exit
+        if (foundContiguous == false) {
+            printf("not enough contiguous blocks available!\n");
+            return;
+        }
+    } else {
+        // allocate blocks in a chained manner (any free blocks)
+        for (int i = 0; i < MaxBlocks && requiredBlocks > 0; i++) {
+            if (disk->blockAllocation[i]) {
+                disk->blockAllocation[i] = false; // mark block as used
+                disk->blocks[i].isFree = false;   // mark block as used
+                if (newFile.firstBlock == -1) newFile.firstBlock = i; // set first block
+                if (prevBlock != -1) disk->blocks[prevBlock].nextBlock = i; // link blocks
+                prevBlock = i;
+                requiredBlocks--;
+            }
         }
     }
 
-    newFile.sizeBlocks = ceil((double)newFile.sizeRecords / BlockSize);
-    newFile.fileId = disk->fileCount;
+    // add the new file to the disk's file list
     disk->files[disk->fileCount++] = newFile;
 
+    // print success message
     printf("file created successfully with ID: %d\n", newFile.fileId);
 }
 
